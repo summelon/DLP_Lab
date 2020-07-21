@@ -1,5 +1,6 @@
 import copy
 import numpy as np
+from argparse import ArgumentParser
 
 import utils
 
@@ -21,7 +22,6 @@ class Linear:
         return np.dot(inp, self.weight) + \
                 (0 if self.bias is None else self.bias)
 
-    # TODO Check if transpose is necessary
     def backward(self, inp: np.ndarray, prev_grad: np.ndarray):
         if self.bias is None:
             return np.dot(inp.T, prev_grad)
@@ -109,17 +109,18 @@ class MyModel:
         return np.equal(pred, gd).sum() / len(gd)
 
 
-def main():
+def main(params):
     np.random.seed(7)
-    model = MyModel(in_features=2, out_features=1, hid_dim=[128, 256])
+    model = MyModel(in_features=2, out_features=1, hid_dim=[8, 16])
     inputs, labels = utils.generate_linear(n=10000)
     # inputs, labels = utils.generate_xor_easy()
+    print(params['show_period'])
 
     for e in range(100000):
         outputs = model.forward(inputs)
         model.backward(inputs, outputs, labels, nesterov=False)
-        model.update(lr=1e-5, gamma=9e-1)
-        if e % 1 == 0:
+        model.update(lr=params['lr'], gamma=params['momentum'])
+        if e % params['show_period'] == 0:
             preds = model.pred(outputs)
             loss = model.mse(outputs, labels).mean()
             print(f"[{e:^7d}]Accuracy now is "
@@ -130,5 +131,19 @@ def main():
                 break
 
 
+def param_loader():
+    parser = ArgumentParser()
+    parser.add_argument("--lr", type=float, default=1e-3,
+                        help="Global learning rate")
+    parser.add_argument("--momentum", type=float, default=0.9,
+                        help="Gamma value in momentum")
+    parser.add_argument("--show-period", type=int, default=100,
+                        help="Period to show training result")
+    args, _ = parser.parse_known_args()
+
+    return vars(args)
+
+
 if __name__ == "__main__":
-    main()
+    p = param_loader()
+    main(p)
