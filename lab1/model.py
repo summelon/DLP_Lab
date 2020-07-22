@@ -6,88 +6,33 @@ import utils
 
 
 class Linear:
-    def __init__(self, in_features: int, out_features: int, bias=False):
+    def __init__(self, in_features: int, out_features: int, activation=True):
+        self.activation = activation
         self.weight = np.random.normal(size=(in_features, out_features))
         self.weight_ahead = copy.deepcopy(self.weight)
 
         self.weight_grad = np.zeros_like(self.weight)
         self.velocity = copy.deepcopy(self.weight_grad)
-        if bias:
-            self.bias = np.random.normal(size=out_features)
-            self.bias_grad = 0
-        else:
-            self.bias = None
 
     def forward(self, inp: np.ndarray):
-        return np.dot(inp, self.weight) + \
-                (0 if self.bias is None else self.bias)
-
-    def backward(self, inp: np.ndarray, prev_grad: np.ndarray):
-        if self.bias is None:
-            return np.dot(inp.T, prev_grad)
+        self.Z = np.dot(inp, self.weight)
+        if self.activation:
+            self.A = self.sigmoid(self.Z)
+            return self.A
         else:
-            return np.dot(inp, prev_grad), np.dot(np.ones(len(inp)), prev_grad)
+            return self.Z
+
+    def backward(self, prev_inp: np.ndarray, prev_grad: np.ndarray):
+        if self.activation:
+            prev_grad = np.multiply(
+                    prev_grad, self.sigmoid(self.Z, derivative=True))
+        self.weight_grad = np.dot(prev_inp.T, prev_grad)
+        return prev_grad
 
     def update(self, lr: float, gamma: float = 0):
         self.velocity = lr * self.weight_grad + gamma * self.velocity
         self.weight -= self.velocity
         self.weight_ahead = self.weight + gamma * self.velocity
-        if self.bias is not None:
-            self.bias -= lr * self.bias_grad
-
-
-class MyModel:
-    def __init__(self, in_features: int, out_features: int, hid_dim: list):
-        self.linear_1 = Linear(in_features, hid_dim[0])
-        self.linear_2 = Linear(hid_dim[0], hid_dim[1])
-        self.linear_3 = Linear(hid_dim[1], out_features)
-        self.params = dict()
-
-    def forward(self, inp: np.ndarray):
-        self.params = dict()
-        self.params['Z1'] = self.linear_1.forward(inp)
-        self.params['A1'] = self.sigmoid(self.params['Z1'])
-        self.params['Z2'] = self.linear_2.forward(self.params['A1'])
-        self.params['A2'] = self.sigmoid(self.params['Z2'])
-        self.params['Z3'] = self.linear_3.forward(self.params['A2'])
-        self.params['A3'] = self.sigmoid(self.params['Z3'])
-
-        return self.params['A3']
-
-    def backward(self, inp: np.ndarray, otpt: np.ndarray, gd: np.ndarray,
-                 nesterov: bool = True, loss='ce'):
-        if loss == 'ce':
-            w3_prev_grad = np.multiply(
-                    self.mse(otpt, gd, derivative=True),
-                    self.sigmoid(self.params['Z3'], derivative=True))
-        elif loss == 'mse':
-            w3_prev_grad = np.multiply(
-                    self.ce(otpt, gd, derivative=True),
-                    self.sigmoid(self.params['Z3'], derivative=True))
-        else:
-            raise ValueError(f"No such loss function: {loss}")
-        self.linear_3.weight_grad = self.linear_3.backward(
-                self.params['A2'], w3_prev_grad)
-
-        w2_prev_grad = np.multiply(
-                np.dot(w3_prev_grad,
-                       self.linear_3.weight_ahead.T
-                       if nesterov else self.linear_3.weight.T),
-                self.sigmoid(self.params['Z2'], derivative=True))
-        self.linear_2.weight_grad = self.linear_2.backward(
-                self.params['A1'], w2_prev_grad)
-
-        w1_prev_grad = np.multiply(
-                np.dot(w2_prev_grad,
-                       self.linear_2.weight_ahead.T
-                       if nesterov else self.linear_2.weight.T),
-                self.sigmoid(self.params['Z1'], derivative=True))
-        self.linear_1.weight_grad = self.linear_1.backward(
-                inp, w1_prev_grad)
-
-    def update(self, lr=1e-3, gamma=9e-1):
-        self.linear_1.update(lr, gamma)
-        self.linear_2.update(lr, gamma)
 
     # Activation function
     def sigmoid(self, inp: np.ndarray, derivative=False):
@@ -97,6 +42,51 @@ class MyModel:
             return np.multiply(y(inp), (1 - y(inp)))
         else:
             return y(inp)
+
+
+class MyModel:
+    def __init__(self, in_features: int, out_features: int, hid_dim: list,
+                 activation=True):
+        self.linear_1 = Linear(in_features, hid_dim[0], activation=activation)
+        self.linear_2 = Linear(hid_dim[0], hid_dim[1], activation=activation)
+        self.linear_3 = Linear(hid_dim[1], out_features, activation=activation)
+        self.activation = activation
+
+    def forward(self, inp: np.ndarray):
+        x = self.linear_1.forward(inp)
+        x = self.linear_2.forward(x)
+        x = self.linear_3.forward(x)
+        return x
+
+    def backward(self, inp: np.ndarray, otpt: np.ndarray, gt: np.ndarray,
+                 nesterov: bool = True, loss='ce'):
+        if loss == 'ce':
+            l3_prev_grad = self.mse(otpt, gt, derivative=True)
+        elif loss == 'mse':
+            l3_prev_grad = self.ce(otpt, gt, derivative=True)
+        else:
+            raise ValueError(f"No such loss function: {loss}")
+
+        l2_prev_grad = np.dot(
+                self.linear_3.backward(
+                    self.linear_2.A if self.activation else self.linear_2.Z,
+                    l3_prev_grad),
+                self.linear_3.weight_ahead.T
+                if nesterov else self.linear_3.weight.T)
+
+        l1_prev_grad = np.dot(
+                self.linear_2.backward(
+                    self.linear_1.A if self.activation else self.linear_1.Z,
+                    l2_prev_grad),
+                self.linear_2.weight_ahead.T
+                if nesterov else self.linear_2.weight.T)
+
+        _ = self.linear_1.backward(inp, l1_prev_grad)
+
+    def update(self, lr=1e-3, gamma=9e-1):
+        self.linear_1.update(lr, gamma)
+        self.linear_2.update(lr, gamma)
+        self.linear_3.update(lr, gamma)
 
     # Loss function
     # TODO 1.multi output 2.check if output is one-hot encoding
@@ -109,12 +99,11 @@ class MyModel:
     # Cross entropy
     def ce(self, otpt: np.ndarray, gt: np.ndarray, eps=1e-8, derivative=False):
         if derivative:
-            return (((1-gt) / (1-otpt+eps)) - (gt/otpt+eps)) / len(otpt)
+            return (((1-gt) / (1-otpt+eps)) - (gt/(otpt+eps))) / len(otpt)
         else:
             return -np.mean(gt*np.log(otpt+eps) + (1-gt)*np.log(1-otpt+eps))
 
     def pred(self, otpt):
-        assert all(e <= 1 and e >= 0 for e in otpt), "Value(s) is wrong!"
         return np.array([[1] if e > 0.5 else [0] for e in otpt])
 
     def cal_acc(self, pred: np.ndarray, gd: np.ndarray):
@@ -125,13 +114,14 @@ class MyModel:
 
 def main(params):
     np.random.seed(7)
-    model = MyModel(in_features=2, out_features=1, hid_dim=[8, 16])
     if params['data'] == 'linear':
         inputs, labels = utils.generate_linear(n=100)
     elif params['data'] == 'xor':
         inputs, labels = utils.generate_xor_easy()
     else:
         raise KeyError("Please select a correct input data")
+    model = MyModel(in_features=2, out_features=1,
+                    hid_dim=[8, 16], activation=params['no_activation'])
 
     # Start training
     e = 0
@@ -140,10 +130,12 @@ def main(params):
         e += 1
         outputs = model.forward(inputs)
         if params['loss_fn'] == 'ce':
-            model.backward(inputs, outputs, labels, nesterov=False, loss='ce')
+            model.backward(inputs, outputs, labels,
+                           nesterov=params['nesterov'], loss='ce')
             loss = model.ce(outputs, labels)
         elif params['loss_fn'] == 'mse':
-            model.backward(inputs, outputs, labels, nesterov=False, loss='mse')
+            model.backward(inputs, outputs, labels,
+                           nesterov=params['nesterov'], loss='mse')
             loss = model.mse(outputs, labels)
         else:
             raise ValueError(f"No such loss function: {params['loss_fn']}")
@@ -174,6 +166,10 @@ def param_loader():
                         default='linear', help="Input data type")
     parser.add_argument("--loss_fn", type=str, choices=['ce', 'mse'],
                         default='ce', help="Choose your loss function")
+    parser.add_argument("--nesterov", action='store_true',
+                        help="Use nesterov in momentum if parsed")
+    parser.add_argument("--no_activation", action='store_false',
+                        help="Do not use activation if parsed")
     args, _ = parser.parse_known_args()
 
     return vars(args)
