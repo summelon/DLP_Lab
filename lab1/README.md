@@ -2,7 +2,7 @@
 Student: 林聯政 ID: 0856154   
 - Github link: https://github.com/summelon/DLP_Lab  
 ## Introduction
-From this lab, I have good command of the basic knowledge of simple neural networks.
+From this lab, I have had a good command of the basic knowledge of simple neural networks.
 I implemented one without any other frameworks but only numpy and some standard libraries.   
 To further understand the impact of some components, 
 I did comparison experiments of momentum and loss function, which is shown in `Discussion` part.
