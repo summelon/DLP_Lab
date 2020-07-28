@@ -35,6 +35,8 @@ def separable_conv(activation=torch.nn.ReLU):
 class EEGNet(torch.nn.Module):
     def __init__(self, activation=torch.nn.ReLU):
         super(EEGNet, self).__init__()
+        self.act_name = activation()._get_name()
+        self.name = 'eegnet'
         self.firstConv = first_conv()
         self.depthwiseConv = depthwise_conv(activation=torch.nn.ReLU)
         self.separableConv = separable_conv(activation=torch.nn.ReLU)
