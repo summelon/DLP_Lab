@@ -5,6 +5,8 @@ from torchvision import transforms
 import numpy as np
 from PIL import Image
 
+import cus_aug
+
 
 def getData(root, mode):
     if mode == 'train':
@@ -19,8 +21,9 @@ def getData(root, mode):
 
 def transform_func(mode):
     if mode == 'train':
+        customize_aug = cus_aug.ImgAugTransform()
         return transforms.Compose([
-                    transforms.RandomResizedCrop(224),
+                    customize_aug,
                     transforms.ToTensor(),
                     transforms.Normalize([0.485, 0.456, 0.406],
                                          [0.229, 0.224, 0.225])])
@@ -73,8 +76,7 @@ class RetinopathyDataset(torch.utils.data.Dataset):
 
             step4. Return processed image and label
         """
-        img = Image.open(os.path.join(self.root, 'images',
-                                      self.img_name[index]+'.jpeg'))
+        img = self._open_img(index)
         img = transform_func(self.mode)(img)
         lbl = torch.tensor(self.label[index], dtype=torch.long)
 
@@ -91,7 +93,18 @@ class RetinopathyDataset(torch.utils.data.Dataset):
         plt.imshow(image)
         plt.pause(0)
 
+    def _open_img(self, idx):
+        return Image.open(os.path.join(self.root, 'images',
+                                       self.img_name[idx]+'.jpeg'))
+
+    def check_aug(self):
+        customize_aug = cus_aug.ImgAugTransform()
+        random_idx = np.random.randint(0, 6666, 8)
+        imgs = [self._open_img(idx)[0] for idx in random_idx]
+        customize_aug.check_aug(imgs)
+
 
 if __name__ == '__main__':
     dataset = RetinopathyDataset('./data/', 'val')
     dataset.check_image()
+    # dataset.check_aug()

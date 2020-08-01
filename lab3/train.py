@@ -8,7 +8,7 @@ def create_dataloader():
     train_dataset = dataloader.RetinopathyDataset('./data', 'train')
     train_dl = torch.utils.data.DataLoader(
             dataset=train_dataset, num_workers=6, shuffle=True, batch_size=64)
-    val_dataset = dataloader.RetinopathyDataset('./data', 'train')
+    val_dataset = dataloader.RetinopathyDataset('./data', 'val')
     val_dl = torch.utils.data.DataLoader(
             dataset=val_dataset, num_workers=1, shuffle=False, batch_size=1)
 
@@ -45,7 +45,8 @@ def train_val(model, crtrn, optmzr, skdlr, device):
     train_dl, val_dl = create_dataloader()
     epochs = 10
 
-    for e in range(epochs):
+    for e in range(1, epochs+1):
+        print(f"[ INFO ] No.{e} epoch:")
         model.train()
         inference(train_dl, phase='train')
         model.eval()
