@@ -5,11 +5,12 @@ import dataloader
 
 
 def create_dataloader():
-    dataset = dataloader.RetinopathyDataset('./data', 'train')
+    train_dataset = dataloader.RetinopathyDataset('./data', 'train')
     train_dl = torch.utils.data.DataLoader(
-            dataset=dataset, num_workers=4, shuffle=True, batch_size=32)
+            dataset=train_dataset, num_workers=6, shuffle=True, batch_size=64)
+    val_dataset = dataloader.RetinopathyDataset('./data', 'train')
     val_dl = torch.utils.data.DataLoader(
-            dataset=dataset, num_workers=4, shuffle=False, batch_size=1)
+            dataset=val_dataset, num_workers=1, shuffle=False, batch_size=1)
 
     return train_dl, val_dl
 
@@ -19,9 +20,10 @@ def train_val(model, crtrn, optmzr, skdlr, device):
         pbar = tqdm.tqdm(dl)
         running_loss, running_correct, running_size = 0, 0, 0
         for inps, gts in pbar:
-            inps, gts = inps.to(device), gts.to(device)
-            otpts = model(inps)
-            loss = crtrn(otpts, gts)
+            with torch.set_grad_enabled(phase == 'train'):
+                inps, gts = inps.to(device), gts.to(device)
+                otpts = model(inps)
+                loss = crtrn(otpts, gts)
 
             if phase == 'train':
                 optmzr.zero_grad()
@@ -52,7 +54,7 @@ def train_val(model, crtrn, optmzr, skdlr, device):
 
 def main():
     # Load model
-    model = torchvision.models.resnet50(pretrained=True)
+    model = torchvision.models.resnet18(pretrained=True)
     num_ftrs = model.fc.in_features
     model.fc = torch.nn.Linear(num_ftrs, 5)
     # Define loss
