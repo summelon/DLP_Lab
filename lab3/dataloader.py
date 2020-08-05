@@ -1,11 +1,10 @@
 import os
 import pandas as pd
 import torch
-from torchvision import transforms
 import numpy as np
+from collections import Counter
+from torchvision import transforms
 from PIL import Image
-
-import cus_aug
 
 
 def getData(root, mode):
@@ -19,68 +18,64 @@ def getData(root, mode):
         return np.squeeze(img.values), np.squeeze(label.values)
 
 
-def transform_func(mode):
+def transform_func(mode, img_size):
+    # import cus_aug
+    # customize_aug = cus_aug.ImgAugTransform(mode)
+    # return transforms.Compose([
+    #             customize_aug,
+    #             transforms.ToTensor()])
     if mode == 'train':
-        customize_aug = cus_aug.ImgAugTransform()
         return transforms.Compose([
-                    customize_aug,
+                    transforms.Resize(img_size),
+                    transforms.RandomHorizontalFlip(p=0.5),
+                    transforms.RandomVerticalFlip(p=0.5),
+                    transforms.RandomRotation((-30, 30)),
                     transforms.ToTensor(),
                     transforms.Normalize([0.485, 0.456, 0.406],
                                          [0.229, 0.224, 0.225])])
     else:
         return transforms.Compose([
-                    transforms.Resize(256),
-                    transforms.CenterCrop(224),
+                    transforms.Resize(img_size),
                     transforms.ToTensor(),
                     transforms.Normalize([0.485, 0.456, 0.406],
                                          [0.229, 0.224, 0.225])])
 
 
 class RetinopathyDataset(torch.utils.data.Dataset):
-    def __init__(self, root, mode):
-        """
-        Args:
-            root (string): Root path of the dataset.
-            mode : Indicate procedure status(training or testing)
-
-            self.img_name (string list): String list that store all image names.
-            self.label (int or float list): Numerical list that store all ground truth label values.
-        """
+    def __init__(self, root, mode, img_size):
         self.root = root
         self.img_name, self.label = getData(root, mode)
         self.mode = mode
+        self.img_size = img_size
         print("> Found %d images..." % (len(self.img_name)))
 
     def __len__(self):
         """'return the size of dataset"""
         return len(self.img_name)
 
-    # TODO Check if label is transformed to long tensor
     def __getitem__(self, index):
-        """something you should implement here"""
-
-        """
-           step1. Get the image path from 'self.img_name' and load it.
-                  hint : path = root + self.img_name[index] + '.jpeg'
-
-           step2. Get the ground truth label from self.label
-
-           step3. Transform the .jpeg rgb images during the training phase, such as resizing, random flipping,
-                  rotation, cropping, normalization etc. But at the beginning, I suggest you follow the hints.
-
-                  In the testing phase, if you have a normalization process during the training phase, you only need
-                  to normalize the data.
-
-                  hints : Convert the pixel value to [0, 1]
-                          Transpose the image shape from [H, W, C] to [C, H, W]
-
-            step4. Return processed image and label
-        """
         img = self._open_img(index)
-        img = transform_func(self.mode)(img)
+        img = transform_func(self.mode, self.img_size)(img)
         lbl = torch.tensor(self.label[index], dtype=torch.long)
 
         return img, lbl
+
+    def _open_img(self, idx):
+        return Image.open(os.path.join(self.root, 'images',
+                                       self.img_name[idx]+'.jpeg'))
+
+    def wts_sampler(self):
+        if self.mode == 'train':
+            counter = Counter(self.label)
+            ratio = np.array([1./counter[cls] for cls in range(5)])
+            wts = torch.FloatTensor([ratio[cls] for cls in self.label])
+            sampler = torch.utils.data.sampler.WeightedRandomSampler(
+                        weights=wts, replacement=True,
+                        num_samples=len(wts))
+            # return sampler
+            return None
+        else:
+            return None
 
     def check_image(self):
         import matplotlib.pyplot as plt
@@ -92,10 +87,6 @@ class RetinopathyDataset(torch.utils.data.Dataset):
         image = np.clip(np_array, 0, 1)
         plt.imshow(image)
         plt.pause(0)
-
-    def _open_img(self, idx):
-        return Image.open(os.path.join(self.root, 'images',
-                                       self.img_name[idx]+'.jpeg'))
 
     def check_aug(self):
         customize_aug = cus_aug.ImgAugTransform()
