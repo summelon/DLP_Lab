@@ -97,10 +97,9 @@ def eval_model(data_loader):
     criterion = torch.nn.CrossEntropyLoss()
 
     model.to(device)
-    train_dl, val_dl = create_dataloader()
 
     model.eval()
-    pbar = tqdm.tqdm(val_dl)
+    pbar = tqdm.tqdm(data_loader)
     running_loss, running_correct, running_size = 0, 0, 0
     gts_list, preds_list = list(), list()
     for inps, gts in pbar:

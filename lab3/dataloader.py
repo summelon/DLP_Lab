@@ -90,12 +90,12 @@ class RetinopathyDataset(torch.utils.data.Dataset):
 
     def check_aug(self):
         customize_aug = cus_aug.ImgAugTransform()
-        random_idx = np.random.randint(0, 6666, 8)
-        imgs = [self._open_img(idx)[0] for idx in random_idx]
+        random_idx = np.random.randint(0, 6666, 1)
+        imgs = [np.array(self._open_img(idx)) for idx in random_idx]
         customize_aug.check_aug(imgs)
 
 
 if __name__ == '__main__':
     dataset = RetinopathyDataset('./data/', 'val')
-    dataset.check_image()
-    # dataset.check_aug()
+    # dataset.check_image()
+    dataset.check_aug()
