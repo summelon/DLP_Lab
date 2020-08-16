@@ -16,32 +16,39 @@ class VAE_Encoder(nn.Module):
         self.mode = anneal_mode
         self.period = anneal_period
 
-        self.embedding = nn.Embedding(input_size, hidden_size)
+        self.word_embedding = nn.Embedding(input_size, hidden_size)
         self.cond_embedding = nn.Embedding(4, hidden_size)
-        self.lstm = nn.LSTM(hidden_size, hidden_size,
+        self.lstm = nn.LSTM(hidden_size*2, hidden_size,
                             num_layers, bidirectional=bidirectional)
         self.fc_mean = nn.Linear(hidden_size*self.num_direct, rep_size)
         self.fc_var = nn.Linear(hidden_size*self.num_direct, rep_size)
 
-    def _reparameterize(self, mu, logvar):
-        std = torch.exp(0.5 * logvar)
-        eps = torch.randn_like(std)
-        return mu + eps * std
-
     def forward(self, e_input, cond):
-        embedded = self.embedding(e_input)
-        cond_embedded = self.cond_embedding(cond.T)
-        cond_embedded = cond_embedded.repeat(
-                            self.lstm.num_layers*self.num_direct, 1, 1)
-        hidden = (cond_embedded, cond_embedded)
+        hidden = self.init_hidden(e_input.shape[1], e_input.device)
+        whole_embedded = self.prepare_embedding(e_input, cond)
 
-        output, hidden = self.lstm(embedded, hidden)
+        output, hidden = self.lstm(whole_embedded, hidden)
         mu, logvar = self.fc_mean(output), self.fc_var(output)
         z = self._reparameterize(mu, logvar)
         # Loss
         annealing_ratio = torch.tensor(self.kl_cost_annealing())
         loss = self.cal_loss(mu, logvar) * annealing_ratio
         return z, hidden, loss
+
+    def prepare_embedding(self, words, tenses):
+        word_embedded = self.word_embedding(words)
+        cond_embedded = self.cond_embedding(tenses.T.repeat(words.shape[0], 1))
+        return torch.cat([word_embedded, cond_embedded], dim=-1)
+
+    def _reparameterize(self, mu, logvar):
+        std = torch.exp(0.5 * logvar)
+        eps = torch.randn_like(std)
+        return mu + eps * std
+
+    def init_hidden(self, batch_size, device):
+        hid_tensor = torch.zeros(self.num_direct*self.lstm.num_layers,
+                                 batch_size, self.hidden_size, device=device)
+        return (hid_tensor, hid_tensor)
 
     def cal_loss(self, mu, logvar):
         return -0.5 * torch.mean(1 + logvar - mu.pow(2) - logvar.exp())
@@ -66,30 +73,36 @@ class VAE_Decoder(nn.Module):
                  num_layers, bidirectional=True):
         super(VAE_Decoder, self).__init__()
         self.rep_size = rep_size
+        self.hidden_size = hidden_size
         self.num_direct = 2 if bidirectional else 1
         self.cond_embedding = nn.Embedding(4, hidden_size)
-        self.lstm = nn.LSTM(rep_size, hidden_size,
+        self.lstm = nn.LSTM(rep_size+hidden_size, hidden_size,
                             num_layers, bidirectional=bidirectional)
         self.fc = nn.Linear(hidden_size*self.num_direct, output_size)
         self.criterion = torch.nn.CrossEntropyLoss()
 
     def forward(self, d_input, cond, e_input=None, tf_flag=False):
-        cond_embedded = self.cond_embedding(cond.T)
-        cond_embedded = cond_embedded.repeat(
-                            self.lstm.num_layers*self.num_direct, 1, 1)
-        hidden = (cond_embedded, cond_embedded)
+        hidden = self.init_hidden(d_input.shape[1], d_input.device)
+        cond_embedded = self.cond_embedding(cond.T.repeat(d_input.shape[0], 1))
 
         # if self.training:
         #     d_input.add_(torch.randn(d_input.shape, device=d_input.device))
 
         if tf_flag:
-            output, hidden = self.teacher_forcing(e_input, hidden)
+            output, hidden = self.teacher_forcing(
+                                e_input, hidden, cond_embedded)
         else:
-            output, hidden = self.lstm(d_input, hidden)
+            whole_input = torch.cat([d_input, cond_embedded], dim=-1)
+            output, hidden = self.lstm(whole_input, hidden)
         output = self.fc(output)
         # Loss
         loss = None if e_input is None else self.cal_loss(output, e_input)
         return output, hidden, loss
+
+    def init_hidden(self, batch_size, device):
+        hid_tensor = torch.zeros(self.num_direct*self.lstm.num_layers,
+                                 batch_size, self.hidden_size, device=device)
+        return (hid_tensor, hid_tensor)
 
     def cal_loss(self, recon_inp, inp):
         inp = torch.flatten(inp)
@@ -100,11 +113,12 @@ class VAE_Decoder(nn.Module):
         data = torch.nn.functional.one_hot(data, oh_dim)
         return data.type(torch.FloatTensor).to(data.device)
 
-    def teacher_forcing(self, ground_truth, hid):
+    def teacher_forcing(self, ground_truth, hid, cond):
         assert ground_truth is not None, "Ground truth is None!"
         ground_truth = self.sps2cat(ground_truth, self.rep_size)
+        whole_input = torch.cat([ground_truth, cond], dim=-1)
         otpts = list()
-        for seq in ground_truth:
+        for seq in whole_input:
             seq = torch.unsqueeze(seq, 0)
             otpt, hid = self.lstm(seq, hid)
             otpts.append(otpt)

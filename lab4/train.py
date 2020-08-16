@@ -73,11 +73,9 @@ def eval_bleu(encoder, decoder, device):
     encoder.eval(), decoder.eval()
     # Get input & target data
     i_words, t_words, i_tenses, t_tenses = utils.create_test_data(device)
-    print(i_tenses)
-    print(t_tenses)
     with torch.no_grad():
         latents, _, _ = encoder(i_words, i_tenses)
-        outputs, _, _ = decoder(latents, t_tenses, i_words)
+        outputs, _, _ = decoder(latents, t_tenses)
         preds = torch.argmax(outputs, dim=-1)
         accuracy = torch.sum(preds == t_words).double() / t_words.numel()
         bleu_acc = utils.compute_batch_bleu(preds, t_words) / len(t_words)
