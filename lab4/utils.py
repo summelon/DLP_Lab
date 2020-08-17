@@ -47,7 +47,7 @@ def gaussian_score(words):
 
 
 def gen_gaussian_latent(pair_num, device):
-    max_len = 15    # Seqence length
+    max_len = 17    # Seqence length
     vocab_len = 29  # Latent.shape[-1]
     normal_latents = torch.empty([max_len, pair_num, vocab_len])
     normal_latents = normal_latents.normal_(mean=0, std=1)
