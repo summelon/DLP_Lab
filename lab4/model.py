@@ -1,8 +1,6 @@
 from __future__ import unicode_literals, print_function, division
 import torch
 import torch.nn as nn
-import matplotlib.pyplot as plt
-plt.switch_backend('agg')
 
 
 class VAE_Encoder(nn.Module):
@@ -16,7 +14,6 @@ class VAE_Encoder(nn.Module):
         self.mode = anneal_mode
         self.period = anneal_period
 
-        self.embedding = nn.Embedding(input_size, hidden_size)
         self.word_embedding = nn.Embedding(input_size, hidden_size)
         self.cond_embedding = nn.Embedding(4, 8)
         self.lstm = nn.LSTM(hidden_size, hidden_size,
@@ -73,10 +70,10 @@ class VAE_Decoder(nn.Module):
         self.hidden_size = hidden_size
         self.num_direct = 2 if bidirectional else 1
         self.word_embedding = nn.Embedding(output_size, hidden_size)
-        self.cond_embedding = nn.Embedding(4, hidden_size)
+        self.cond_embedding = nn.Embedding(4, 8)
         self.lstm = nn.LSTM(hidden_size, hidden_size, num_layers,
                             bidirectional=bidirectional, dropout=dropout_rate)
-        self.hidden_fc = nn.Linear(hidden_size+17*output_size, hidden_size)
+        self.hidden_fc = nn.Linear(8+17*output_size, hidden_size)
         self.fc = nn.Linear(hidden_size*self.num_direct, output_size)
         self.criterion = torch.nn.CrossEntropyLoss()
 

@@ -88,7 +88,7 @@ def eval_bleu(encoder, decoder, device):
         outputs, _, _ = decoder(latents, t_tenses)
         preds = torch.argmax(outputs, dim=-1)
         accuracy = torch.sum(preds == t_words).double() / t_words.numel()
-        bleu_acc = utils.compute_batch_bleu(preds, t_words) / len(t_words)
+        bleu_acc = utils.compute_batch_bleu(preds, t_words) / t_words.shape[1]
     print(utils.idx2char(preds))
     print(utils.idx2char(t_words))
     print(f"Accuracy is {accuracy:.2%}")
@@ -115,7 +115,7 @@ def eval_gaussian(decoder, device, pair_num):
 def main(params):
     pair_num = 100
     vocab_len = 29
-    max_epoch = 1000
+    max_epoch = 10000
     batch_size = params['batch_size']
     hidden_size = params['hidden_size']
     lr = params['lr']
@@ -141,8 +141,6 @@ def main(params):
     e_optimizer = torch.optim.SGD(encoder.parameters(), lr=lr, momentum=0.9)
     d_optimizer = torch.optim.SGD(decoder.parameters(), lr=lr, momentum=0.9)
 
-    best_bleu, best_gaussian = 0.0, 0.0
-    best_gaussian_wts, best_bleu_wts = dict(), dict()
     kld_list, ce_list, bleu_list = list(), list(), list()
     for e in range(max_epoch):
         print()
@@ -153,26 +151,12 @@ def main(params):
         gaussian_score = eval_gaussian(decoder, device, pair_num)
         kld_list.append(kld_loss), ce_list.append(ce_loss)
         bleu_list.append(bleu_score)
-        if best_gaussian < gaussian_score:
-            best_gaussian = gaussian_score
-            best_gaussian_wts = copy.deepcopy(
-                    {'encoder': encoder.state_dict(),
-                     'decoder': decoder.state_dict()},)
-        if best_bleu < bleu_score:
-            best_bleu = bleu_score
-            best_bleu_wts = copy.deepcopy(
-                    {'encoder': encoder.state_dict(),
-                     'decoder': decoder.state_dict()},)
-        if best_gaussian == 0.05:
-            break
-    recorder = {'kld': kld_list, 'ce': ce_list, 'bleu': bleu_list}
-    if best_gaussian > 0:
-        print("Save best gaussian weight!")
-        torch.save(best_gaussian_wts.update(recorder),
-                   f'./ckpt/{best_bleu:.2f}_{best_gaussian:.2f}.pt')
-    else:
-        torch.save(best_bleu_wts.update(recorder),
-                   f'./ckpt/{best_bleu:.2f}_{best_gaussian:.2f}.pt')
+        if gaussian_score > 0.05 or bleu_score > 0.65:
+            recorder = {'kld': kld_list, 'ce': ce_list, 'bleu': bleu_list,
+                        'encoder': encoder.state_dict(),
+                        'decoder': decoder.state_dict()}
+            torch.save(recorder,
+                       f'./ckpt/{bleu_score:.2f}_{gaussian_score:.2f}.pt')
 
 
 def param_loader():

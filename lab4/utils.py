@@ -42,6 +42,7 @@ def gaussian_score(words):
         for t in words:
             for i in words_list:
                 if t == i:
+                    print(t)
                     score += 1
     return score / len(words)
 
