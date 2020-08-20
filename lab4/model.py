@@ -15,17 +15,15 @@ class VAE_Encoder(nn.Module):
         self.period = anneal_period
 
         self.word_embedding = nn.Embedding(input_size, hidden_size)
-        self.cond_embedding = nn.Embedding(4, 8)
+        self.cond_embedding = nn.Embedding(4, hidden_size)
         self.lstm = nn.LSTM(hidden_size, hidden_size,
                             num_layers, bidirectional=bidirectional)
-        self.hidden_fc = nn.Linear(8, hidden_size)
         self.fc_mean = nn.Linear(hidden_size*self.num_direct, rep_size)
         self.fc_var = nn.Linear(hidden_size*self.num_direct, rep_size)
 
     def forward(self, e_input, cond):
         embedded = self.word_embedding(e_input)
         hidden = self.init_hidden(cond)
-        hidden = self.hidden_fc(hidden)
 
         output, hidden = self.lstm(embedded, (hidden, hidden))
         mu, logvar = self.fc_mean(output), self.fc_var(output)
@@ -70,10 +68,10 @@ class VAE_Decoder(nn.Module):
         self.hidden_size = hidden_size
         self.num_direct = 2 if bidirectional else 1
         self.word_embedding = nn.Embedding(output_size, hidden_size)
-        self.cond_embedding = nn.Embedding(4, 8)
+        self.cond_embedding = nn.Embedding(4, hidden_size)
         self.lstm = nn.LSTM(hidden_size, hidden_size, num_layers,
                             bidirectional=bidirectional, dropout=dropout_rate)
-        self.hidden_fc = nn.Linear(8+17*output_size, hidden_size)
+        self.hidden_fc = nn.Linear(hidden_size+17*output_size, hidden_size)
         self.fc = nn.Linear(hidden_size*self.num_direct, output_size)
         self.criterion = torch.nn.CrossEntropyLoss()
 

@@ -1,7 +1,6 @@
 import torch
 import random
 import tqdm
-import copy
 import numpy as np
 from argparse import ArgumentParser
 
@@ -104,9 +103,6 @@ def eval_gaussian(decoder, device, pair_num):
     preds = torch.argmax(outputs, dim=-1)
     pred_word_pairs = utils.gaussian_post_processing(preds)
     score = utils.gaussian_score(pred_word_pairs)
-    print()
-    for i in range(10):
-        print(pred_word_pairs[i])
     print(f"Gaussian score is {score:.2%}")
 
     return score
@@ -142,6 +138,16 @@ def main(params):
     d_optimizer = torch.optim.SGD(decoder.parameters(), lr=lr, momentum=0.9)
 
     kld_list, ce_list, bleu_list = list(), list(), list()
+    # Resume
+    if params['resume'] is not None:
+        print(f"Resume from {params['resume']}")
+        pretrained = torch.load(params['resume'])
+        encoder.load_state_dict(pretrained['encoder'])
+        decoder.load_state_dict(pretrained['decoder'])
+    else:
+        print("Train from scratch")
+
+    # Train iteration
     for e in range(max_epoch):
         print()
         print(f"[ INFO ] No.{e} epoch")
@@ -151,19 +157,19 @@ def main(params):
         gaussian_score = eval_gaussian(decoder, device, pair_num)
         kld_list.append(kld_loss), ce_list.append(ce_loss)
         bleu_list.append(bleu_score)
-        if gaussian_score > 0.05 or bleu_score > 0.65:
+        if gaussian_score > 0.05 and bleu_score > 0.7:
             recorder = {'kld': kld_list, 'ce': ce_list, 'bleu': bleu_list,
                         'encoder': encoder.state_dict(),
                         'decoder': decoder.state_dict()}
             torch.save(recorder,
-                       f'./ckpt/{bleu_score:.2f}_{gaussian_score:.2f}.pt')
+                       f'./ckpt/bs{batch_size}_{bleu_score:.2f}_{gaussian_score:.2f}.pt')
 
 
 def param_loader():
     parser = ArgumentParser()
     parser.add_argument("--batch_size", type=int, default=32,
                         help="Batch size")
-    parser.add_argument("--hidden_size", type=int, default=256,
+    parser.add_argument("--hidden_size", type=int, default=1024,
                         help="Hidden size")
     parser.add_argument("--lr", type=float, default=5e-2,
                         help="Learning rate")
@@ -173,13 +179,15 @@ def param_loader():
                              "and teacher forcing")
     parser.add_argument("--anneal_period", type=int, default=1e+4,
                         help="Final value = set value / batch size")
-    parser.add_argument("--num_layers", type=int, default=2,
+    parser.add_argument("--num_layers", type=int, default=3,
                         help="Number of layers for LSTM, "
                              "default 2 for dropout")
     parser.add_argument("--bidirection", type=bool, default=True,
                         help="Use bidirection in LSTM or not")
     parser.add_argument("--dropout_rate", type=float, default=0.5,
                         help="Dropout rate in decoder")
+    parser.add_argument("--resume", type=str,
+                        help="Resume from .pt file")
     args, _ = parser.parse_known_args()
 
     return vars(args)
