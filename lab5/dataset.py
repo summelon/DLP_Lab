@@ -37,13 +37,11 @@ def gen_labels(num_cls: int, batch_size: int) -> torch.Tensor:
 
 
 class SyntheticDataset(torch.utils.data.Dataset):
-    def __init__(self, img_size: int, mode: str = 'train',
-                 noise_ratio: float = 0.2):
+    def __init__(self, img_size: int, mode: str = 'train'):
         super(SyntheticDataset, self).__init__()
 
         self.img_size = img_size
         self.mode = mode
-        self.noise_ratio = noise_ratio
         label_df = pd.read_json('./dataset/objects.json', lines=True)
         self.label_map = label_df.iloc[0].to_dict()
         self.img_list, self.label_list = self.read_json()
@@ -58,8 +56,6 @@ class SyntheticDataset(torch.utils.data.Dataset):
             # Convert RGBA to RGB
             img = Image.open(img_path).convert('RGB')
             img = trans_func(self.mode, self.img_size)(img)
-            noise = torch.randn(img.shape)
-            img = img * (1 - self.noise_ratio) + noise * self.noise_ratio
         label = self.sps2oh(self.label_list[idx])
         return img, label
 

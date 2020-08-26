@@ -12,7 +12,6 @@ from torchvision.utils import save_image
 
 sys.path.append('/home/shortcake/project/DLP_Lab/lab5')
 import dataset
-# sys.path.append('/home/shortcake/project/DLP_Lab/lab5')
 import eval_gen
 
 cuda = True if torch.cuda.is_available() else False
@@ -49,6 +48,8 @@ def params_loader():
                         help="Gaussian noise add into input of discriminator")
     parser.add_argument("--noise_decay", type=float, default=0.99,
                         help="Decay per epoch for gaussian noise add to discriminator")
+    parser.add_argument("--n_critic", type=int, default=5,
+                        help="Number of training steps for discriminator per iter")
     opt = parser.parse_args()
     print(opt)
 
@@ -80,7 +81,31 @@ def sample_image(n_row, batches_done):
     # labels = Variable(LongTensor(labels))
     labels = dataset.gen_labels(opt.n_classes, n_row ** 2).type(FloatTensor)
     gen_imgs = generator(z, labels)
-    save_image(gen_imgs.data, "images/acgan/%d.png" % batches_done, nrow=n_row, normalize=True)
+    save_image(gen_imgs.data, "images/wgan_gp/%d.png" % batches_done, nrow=n_row, normalize=True)
+
+
+def compute_gradient_penalty(D, real_samples, fake_samples):
+    """Calculates the gradient penalty loss for WGAN GP"""
+    import torch.autograd as autograd
+
+    # Random weight term for interpolation between real and fake samples
+    alpha = FloatTensor(np.random.random((real_samples.size(0), 1, 1, 1)))
+    # Get random interpolation between real and fake samples
+    interpolates = (alpha * real_samples + ((1 - alpha) * fake_samples)).requires_grad_(True)
+    d_interpolates, _ = D(interpolates)
+    fake = Variable(FloatTensor(real_samples.shape[0], 1).fill_(1.0), requires_grad=False)
+    # Get gradient w.r.t. interpolates
+    gradients = autograd.grad(
+        outputs=d_interpolates,
+        inputs=interpolates,
+        grad_outputs=fake,
+        create_graph=True,
+        retain_graph=True,
+        only_inputs=True,
+    )[0]
+    gradients = gradients.view(gradients.size(0), -1)
+    gradient_penalty = ((gradients.norm(2, dim=1) - 1) ** 2).mean()
+    return gradient_penalty
 
 
 class Generator(nn.Module):
@@ -123,7 +148,8 @@ class Discriminator(nn.Module):
     def __init__(self, img_size):
         super(Discriminator, self).__init__()
 
-        def discriminator_block(in_filters, out_filters, bn=True):
+        # Modified bn=False here because of gp
+        def discriminator_block(in_filters, out_filters, bn=False):
             """Returns layers of each discriminator block"""
             block = [nn.Conv2d(in_filters, out_filters, 3, 2, 1), nn.LeakyReLU(0.2, inplace=True), nn.Dropout2d(0.25)]
             if bn:
@@ -142,10 +168,9 @@ class Discriminator(nn.Module):
         # The height and width of downsampled image
         ds_size = img_size // 2 ** 4
 
-        # Output layers
-        self.adv_layer = nn.Sequential(
-                nn.Linear(128 * ds_size ** 2, 1), nn.Sigmoid())
-        # self.aux_layer = nn.Sequential(nn.Linear(128 * ds_size ** 2, opt.n_classes), nn.Softmax(dim=1))
+        # Output layers, Remove sigmoid since wgan loss
+        self.adv_layer = nn.Linear(128 * ds_size ** 2, 1)
+
         self.aux_layer = nn.Sequential(
                 nn.Linear(128 * ds_size ** 2, n_classes), nn.Sigmoid())
 
@@ -159,13 +184,14 @@ class Discriminator(nn.Module):
 
 
 if __name__ == "__main__":
-    os.makedirs("images", exist_ok=True)
+    os.makedirs("images/wgan_gp", exist_ok=True)
+    os.makedirs("ckpt/wgan_gp", exist_ok=True)
     fix_seed()
 
     opt = params_loader()
 
     # Loss functions
-    adversarial_loss = torch.nn.BCELoss()
+    # adversarial_loss = torch.nn.BCELoss()
     auxiliary_loss = torch.nn.BCELoss()
     # ----------------
 
@@ -176,7 +202,7 @@ if __name__ == "__main__":
     if cuda:
         generator.cuda()
         discriminator.cuda()
-        adversarial_loss.cuda()
+        # adversarial_loss.cuda()
         auxiliary_loss.cuda()
 
     # Initialize weights
@@ -234,12 +260,22 @@ if __name__ == "__main__":
             # Generate a batch of images
             gen_imgs = generator(z, gen_labels)
 
-            # Loss measures generator's ability to fool the discriminator
-            validity, pred_label = discriminator(gen_imgs)
-            g_loss = 0.5 * (adversarial_loss(validity, valid) + auxiliary_loss(pred_label, gen_labels))
+            critic = opt.n_critic if run_d_loss > 2.0 else 1
+            if i % opt.n_critic == 0:
+                # Loss measures generator's ability to fool the discriminator
+                validity, pred_label = discriminator(gen_imgs)
+                # --- Original GAN ---
+                # g_loss = 0.5 * (adversarial_loss(validity, valid) + auxiliary_loss(pred_label, gen_labels))
+                # --- WGAN ---
+                g_adv_loss = -torch.mean(validity)
+                # g_aux_loss = auxiliary_loss(pred_label, gen_labels)
+                # g_loss = g_adv_loss + g_aux_loss
+                g_loss = g_adv_loss
 
-            g_loss.backward()
-            optimizer_G.step()
+                g_loss.backward()
+                optimizer_G.step()
+
+                run_g_loss += g_loss.double() * len(imgs)
 
             # ---------------------
             #  Train Discriminator
@@ -250,28 +286,33 @@ if __name__ == "__main__":
             # Add gaussian noise to real image
             noise = torch.cat([torch.randn(imgs.shape[1:]).unsqueeze(0) for i in range(imgs.shape[0])], dim=0).to(real_imgs.device)
             real_imgs = real_imgs * (1 - noise_ratio) + noise * noise_ratio
+
             # Loss for real images
             real_pred, real_aux = discriminator(real_imgs)
-            d_real_loss = (adversarial_loss(real_pred, valid) + auxiliary_loss(real_aux, labels)) / 2
-
             # Loss for fake images
             fake_pred, fake_aux = discriminator(gen_imgs.detach())
-            d_fake_loss = (adversarial_loss(fake_pred, fake) + auxiliary_loss(fake_aux, gen_labels)) / 2
+
+            # --- Original GAN ---
+            # d_real_loss = (adversarial_loss(real_pred, valid) + auxiliary_loss(real_aux, labels)) / 2
+            # d_fake_loss = (adversarial_loss(fake_pred, fake) + auxiliary_loss(fake_aux, gen_labels)) / 2
+
+            # --- WGAN ---
+            lambda_gp = 10
+            gradient_penalty = compute_gradient_penalty(discriminator, real_imgs.data, gen_imgs.data)
+            d_adv_loss = -(torch.mean(real_pred) - torch.mean(fake_pred)) + lambda_gp * gradient_penalty
+            # d_aux_loss = (auxiliary_loss(real_aux, labels) + auxiliary_loss(fake_aux, gen_labels)) / 2
 
             # Total discriminator loss
-            d_loss = (d_real_loss + d_fake_loss) / 2
+            # d_loss = (d_real_loss + d_fake_loss) / 2
+            d_loss = d_adv_loss
 
             d_loss.backward()
             optimizer_D.step()
 
             # Calculate discriminator accuracy
-            # pred = np.concatenate([real_aux.data.cpu().numpy(), fake_aux.data.cpu().numpy()], axis=0)
-            # gt = np.concatenate([labels.data.cpu().numpy(), gen_labels.data.cpu().numpy()], axis=0)
-            # d_acc = np.mean(np.argmax(pred, axis=1) == gt)
             pred = (torch.cat([real_aux, fake_aux], dim=0) > torch.tensor(0.5)).type(LongTensor)
             gt = torch.cat([labels, gen_labels], dim=0)
 
-            run_g_loss += g_loss.double() * len(imgs)
             run_d_loss += d_loss.double() * len(imgs)
             run_size += len(imgs)
             run_gt += torch.sum(gt == 1)
@@ -280,7 +321,7 @@ if __name__ == "__main__":
 
             pbar.set_postfix(D_loss=f'{run_d_loss.item()/run_size:.3f}',
                              acc=f'{run_acc:.2%}',
-                             G_loss=f'{run_g_loss.item()/run_size:.3f}')
+                             G_loss=f'{run_g_loss.item()/(run_size/opt.n_critic):.3f}')
                              # ratio=f'{noise_ratio:.3%}')
             batches_done = epoch * len(dataloader) + i
             if batches_done % opt.sample_interval == 0:
@@ -300,4 +341,4 @@ if __name__ == "__main__":
             torch.save({'generator': generator.state_dict(),
                         'discriminator': discriminator.state_dict(),
                         'acc': run_acc},
-                       f'ckpt/acgan/acgan.pth')
+                       f'ckpt/wgan_gp/wgan_gp.pth')
