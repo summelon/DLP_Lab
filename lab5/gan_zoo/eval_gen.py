@@ -15,15 +15,6 @@ def fix_seed():
     np.random.seed(666)
 
 
-def gen_sample(generator, labels):
-    latent_dim = 100
-    z = [torch.randn(1, latent_dim) for i in range(len(labels))]
-    z = torch.cat(z, dim=0).to(labels.device)
-    gen_img = generator(z, labels)
-
-    return gen_img
-
-
 def denorm(imgs):
     min_value = float(imgs.min())
     max_value = float(imgs.max())
@@ -38,16 +29,16 @@ def denorm(imgs):
     return imgs
 
 
-def eval_gen(generator, device):
+def eval_gen(generator, noise):
     classifer_weight_path = "./ckpt/classifier_weight.pth"
     classifier = evaluator.evaluation_model(classifer_weight_path)
     classifier.resnet18.eval()
 
     dataset = SyntheticDataset(img_size=666, mode='val')
     labels = torch.cat([data[1].view(1, -1) for data in list(dataset)])
-    labels = labels.type(torch.FloatTensor).to(device)
+    labels = labels.type(torch.FloatTensor).to(noise.device)
 
-    imgs = gen_sample(generator, labels)
+    imgs = generator(noise, labels)
     imgs = denorm(imgs)
 
     return classifier.eval(imgs, labels)
@@ -63,7 +54,9 @@ def main():
     generator.load_state_dict(saved_dict['generator'])
     generator.eval()
 
-    acc = eval_gen(generator, device)
+    test_noise = [torch.randn(1, 100) for i in range(32)]
+    test_noise = torch.cat(test_noise, dim=0).to(device)
+    acc = eval_gen(generator, test_noise)
     print(acc)
 
 

@@ -75,16 +75,14 @@ def weights_init_normal(m):
 def sample_image(n_row, batches_done):
     """Saves a grid of generated digits ranging from 0 to n_classes"""
     # Sample noise
-    z = Variable(FloatTensor(np.random.normal(0, 1, (n_row ** 2, opt.latent_dim))))
-    # Get labels ranging from 0 to n_classes for n rows
-    # labels = np.array([num for _ in range(n_row) for num in range(n_row)])
-    # labels = Variable(LongTensor(labels))
+    z = [torch.randn((1, opt.latent_dim)) for i in range(n_row ** 2)]
+    z = torch.cat(z, dim=0).type(FloatTensor)
     labels = dataset.gen_labels(opt.n_classes, n_row ** 2).type(FloatTensor)
     gen_imgs = generator(z, labels)
     save_image(gen_imgs.data, "images/wgan_gp/%d.png" % batches_done, nrow=n_row, normalize=True)
 
 
-def compute_gradient_penalty(D, real_samples, fake_samples):
+def compute_gradient_penalty(D, real_samples, fake_samples, real_labels, fake_labels):
     """Calculates the gradient penalty loss for WGAN GP"""
     import torch.autograd as autograd
 
@@ -92,7 +90,9 @@ def compute_gradient_penalty(D, real_samples, fake_samples):
     alpha = FloatTensor(np.random.random((real_samples.size(0), 1, 1, 1)))
     # Get random interpolation between real and fake samples
     interpolates = (alpha * real_samples + ((1 - alpha) * fake_samples)).requires_grad_(True)
-    d_interpolates, _ = D(interpolates)
+    alpha = alpha.view(-1, 1)
+    inter_labels = (alpha * real_labels + ((1 - alpha) * fake_labels)).requires_grad_(True)
+    d_interpolates = D(interpolates, inter_labels)
     fake = Variable(FloatTensor(real_samples.shape[0], 1).fill_(1.0), requires_grad=False)
     # Get gradient w.r.t. interpolates
     gradients = autograd.grad(
@@ -112,75 +112,55 @@ class Generator(nn.Module):
     def __init__(self, img_size, latent_dim):
         super(Generator, self).__init__()
 
-        channels = 3
+        def block(in_feat, out_feat, normalize=True):
+            layers = [nn.Linear(in_feat, out_feat)]
+            if normalize:
+                layers.append(nn.BatchNorm1d(out_feat, 0.8))
+            layers.append(nn.LeakyReLU(0.2, inplace=True))
+            return layers
+
         n_classes = 24
-        # self.label_emb = nn.Embedding(opt.n_classes, opt.latent_dim)
         self.lbl2latent = nn.Linear(n_classes, latent_dim, bias=True)
-
-        self.init_size = img_size // 4  # Initial size before upsampling
-        self.l1 = nn.Sequential(
-                nn.Linear(latent_dim*2, 128 * self.init_size ** 2))
-
-        self.conv_blocks = nn.Sequential(
-            nn.BatchNorm2d(128),
-            nn.Upsample(scale_factor=2),
-            nn.Conv2d(128, 128, 3, stride=1, padding=1),
-            nn.BatchNorm2d(128, 0.8),
-            nn.LeakyReLU(0.2, inplace=True),
-            nn.Upsample(scale_factor=2),
-            nn.Conv2d(128, 64, 3, stride=1, padding=1),
-            nn.BatchNorm2d(64, 0.8),
-            nn.LeakyReLU(0.2, inplace=True),
-            nn.Conv2d(64, channels, 3, stride=1, padding=1),
-            nn.Tanh(),
+        self.img_shape = (3, img_size, img_size)
+        self.model = nn.Sequential(
+            *block(opt.latent_dim*2, 128, normalize=False),
+            *block(128, 256),
+            *block(256, 512),
+            *block(512, 1024),
+            nn.Linear(1024, int(np.prod(self.img_shape))),
+            nn.Tanh()
         )
 
     def forward(self, noise, labels):
-        # gen_input = torch.mul(self.label_emb(labels), noise)
         gen_input = torch.cat([self.lbl2latent(labels), noise], dim=-1)
-        out = self.l1(gen_input)
-        out = out.view(out.shape[0], 128, self.init_size, self.init_size)
-        img = self.conv_blocks(out)
+        img = self.model(gen_input)
+        img = img.view(img.shape[0], *self.img_shape)
         return img
 
 
 class Discriminator(nn.Module):
-    def __init__(self, img_size):
+    def __init__(self, img_size, latent_dim):
         super(Discriminator, self).__init__()
 
-        # Modified bn=False here because of gp
-        def discriminator_block(in_filters, out_filters, bn=False):
-            """Returns layers of each discriminator block"""
-            block = [nn.Conv2d(in_filters, out_filters, 3, 2, 1), nn.LeakyReLU(0.2, inplace=True), nn.Dropout2d(0.25)]
-            if bn:
-                block.append(nn.BatchNorm2d(out_filters, 0.8))
-            return block
-
-        channels = 3
         n_classes = 24
-        self.conv_blocks = nn.Sequential(
-            *discriminator_block(channels, 16, bn=False),
-            *discriminator_block(16, 32),
-            *discriminator_block(32, 64),
-            *discriminator_block(64, 128),
+        img_shape = (3, img_size, img_size)
+        self.lbl2latent = nn.Linear(n_classes, latent_dim, bias=True)
+        self.model = nn.Sequential(
+            # nn.Linear(int(np.prod(img_shape)+latent_dim), 512),
+            nn.Linear(int(np.prod(img_shape)), 512),
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.Linear(512, 256),
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.Linear(256, 1),
         )
 
-        # The height and width of downsampled image
-        ds_size = img_size // 2 ** 4
-
-        # Output layers, Remove sigmoid since wgan loss
-        self.adv_layer = nn.Linear(128 * ds_size ** 2, 1)
-
-        self.aux_layer = nn.Sequential(
-                nn.Linear(128 * ds_size ** 2, n_classes), nn.Sigmoid())
-
-    def forward(self, img):
-        out = self.conv_blocks(img)
-        out = out.view(out.shape[0], -1)
-        validity = self.adv_layer(out)
-        label = self.aux_layer(out)
-
-        return validity, label
+    def forward(self, img, labels):
+        # cond = self.lbl2latent(labels)
+        img_flat = img.view(img.shape[0], -1)
+        # cond_img = torch.cat([img_flat, cond], dim=-1)
+        cond_img = img_flat
+        validity = self.model(cond_img)
+        return validity
 
 
 if __name__ == "__main__":
@@ -197,7 +177,7 @@ if __name__ == "__main__":
 
     # Initialize generator and discriminator
     generator = Generator(opt.img_size, opt.latent_dim)
-    discriminator = Discriminator(opt.img_size)
+    discriminator = Discriminator(opt.img_size, opt.latent_dim)
 
     if cuda:
         generator.cuda()
@@ -224,6 +204,8 @@ if __name__ == "__main__":
     #  Training
     # ----------
 
+    test_noise = [torch.randn(1, opt.latent_dim) for i in range(32)]
+    test_noise = torch.cat(test_noise, dim=0).type(FloatTensor)
     best_acc = 0
     noise_ratio = opt.noise_ratio
     for epoch in range(opt.n_epochs):
@@ -260,16 +242,11 @@ if __name__ == "__main__":
             # Generate a batch of images
             gen_imgs = generator(z, gen_labels)
 
-            critic = opt.n_critic if run_d_loss > 2.0 else 1
+            # critic = opt.n_critic if run_d_loss > 2.0 else 1
             if i % opt.n_critic == 0:
                 # Loss measures generator's ability to fool the discriminator
-                validity, pred_label = discriminator(gen_imgs)
-                # --- Original GAN ---
-                # g_loss = 0.5 * (adversarial_loss(validity, valid) + auxiliary_loss(pred_label, gen_labels))
-                # --- WGAN ---
+                validity = discriminator(gen_imgs, gen_labels)
                 g_adv_loss = -torch.mean(validity)
-                # g_aux_loss = auxiliary_loss(pred_label, gen_labels)
-                # g_loss = g_adv_loss + g_aux_loss
                 g_loss = g_adv_loss
 
                 g_loss.backward()
@@ -288,39 +265,23 @@ if __name__ == "__main__":
             real_imgs = real_imgs * (1 - noise_ratio) + noise * noise_ratio
 
             # Loss for real images
-            real_pred, real_aux = discriminator(real_imgs)
+            real_pred = discriminator(real_imgs, labels)
             # Loss for fake images
-            fake_pred, fake_aux = discriminator(gen_imgs.detach())
+            fake_imgs = gen_imgs.detach() if torch.rand(1) > 0.3 else real_imgs
+            fake_pred = discriminator(fake_imgs, gen_labels)
 
-            # --- Original GAN ---
-            # d_real_loss = (adversarial_loss(real_pred, valid) + auxiliary_loss(real_aux, labels)) / 2
-            # d_fake_loss = (adversarial_loss(fake_pred, fake) + auxiliary_loss(fake_aux, gen_labels)) / 2
-
-            # --- WGAN ---
             lambda_gp = 10
-            gradient_penalty = compute_gradient_penalty(discriminator, real_imgs.data, gen_imgs.data)
+            gradient_penalty = compute_gradient_penalty(discriminator, real_imgs.data, fake_imgs.data, labels, gen_labels)
             d_adv_loss = -(torch.mean(real_pred) - torch.mean(fake_pred)) + lambda_gp * gradient_penalty
-            # d_aux_loss = (auxiliary_loss(real_aux, labels) + auxiliary_loss(fake_aux, gen_labels)) / 2
-
-            # Total discriminator loss
-            # d_loss = (d_real_loss + d_fake_loss) / 2
             d_loss = d_adv_loss
 
             d_loss.backward()
             optimizer_D.step()
 
-            # Calculate discriminator accuracy
-            pred = (torch.cat([real_aux, fake_aux], dim=0) > torch.tensor(0.5)).type(LongTensor)
-            gt = torch.cat([labels, gen_labels], dim=0)
-
             run_d_loss += d_loss.double() * len(imgs)
             run_size += len(imgs)
-            run_gt += torch.sum(gt == 1)
-            run_correct += torch.sum((pred == gt) & (gt == 1))
-            run_acc = run_correct.double() / run_gt
 
             pbar.set_postfix(D_loss=f'{run_d_loss.item()/run_size:.3f}',
-                             acc=f'{run_acc:.2%}',
                              G_loss=f'{run_g_loss.item()/(run_size/opt.n_critic):.3f}')
                              # ratio=f'{noise_ratio:.3%}')
             batches_done = epoch * len(dataloader) + i
@@ -333,12 +294,12 @@ if __name__ == "__main__":
 
         # Test on evaluator from TA
         generator.eval()
-        test_acc = eval_gen.eval_gen(generator, real_imgs.device)
+        test_acc = eval_gen.eval_gen(generator, test_noise)
         generator.train()
         print(f"Test accuracy on evaluator is {test_acc:.2%}")
         if best_acc < test_acc:
-            best_acc = run_acc
+            best_acc = test_acc
             torch.save({'generator': generator.state_dict(),
                         'discriminator': discriminator.state_dict(),
-                        'acc': run_acc},
+                        'acc': test_acc},
                        f'ckpt/wgan_gp/wgan_gp.pth')

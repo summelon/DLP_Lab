@@ -74,10 +74,8 @@ def weights_init_normal(m):
 def sample_image(n_row, batches_done):
     """Saves a grid of generated digits ranging from 0 to n_classes"""
     # Sample noise
-    z = Variable(FloatTensor(np.random.normal(0, 1, (n_row ** 2, opt.latent_dim))))
-    # Get labels ranging from 0 to n_classes for n rows
-    # labels = np.array([num for _ in range(n_row) for num in range(n_row)])
-    # labels = Variable(LongTensor(labels))
+    z = [torch.randn((1, opt.latent_dim)) for i in range(n_row ** 2)]
+    z = torch.cat(z, dim=0).type(FloatTensor)
     labels = dataset.gen_labels(opt.n_classes, n_row ** 2).type(FloatTensor)
     gen_imgs = generator(z, labels)
     save_image(gen_imgs.data, "images/acgan/%d.png" % batches_done, nrow=n_row, normalize=True)
@@ -198,6 +196,8 @@ if __name__ == "__main__":
     #  Training
     # ----------
 
+    test_noise = [torch.randn(1, opt.latent_dim) for i in range(32)]
+    test_noise = torch.cat(test_noise, dim=0).type(FloatTensor)
     best_acc = 0
     noise_ratio = opt.noise_ratio
     for epoch in range(opt.n_epochs):
@@ -292,12 +292,12 @@ if __name__ == "__main__":
 
         # Test on evaluator from TA
         generator.eval()
-        test_acc = eval_gen.eval_gen(generator, real_imgs.device)
+        test_acc = eval_gen.eval_gen(generator, test_noise)
         generator.train()
         print(f"Test accuracy on evaluator is {test_acc:.2%}")
         if best_acc < test_acc:
-            best_acc = run_acc
+            best_acc = test_acc
             torch.save({'generator': generator.state_dict(),
                         'discriminator': discriminator.state_dict(),
-                        'acc': run_acc},
+                        'acc': test_acc},
                        f'ckpt/acgan/acgan.pth')
