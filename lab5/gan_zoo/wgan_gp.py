@@ -92,7 +92,7 @@ def compute_gradient_penalty(D, real_samples, fake_samples, real_labels, fake_la
     interpolates = (alpha * real_samples + ((1 - alpha) * fake_samples)).requires_grad_(True)
     alpha = alpha.view(-1, 1)
     inter_labels = (alpha * real_labels + ((1 - alpha) * fake_labels)).requires_grad_(True)
-    d_interpolates = D(interpolates, inter_labels)
+    d_interpolates = D(interpolates, inter_labels).view(-1, 1)
     fake = Variable(FloatTensor(real_samples.shape[0], 1).fill_(1.0), requires_grad=False)
     # Get gradient w.r.t. interpolates
     gradients = autograd.grad(
@@ -112,54 +112,74 @@ class Generator(nn.Module):
     def __init__(self, img_size, latent_dim):
         super(Generator, self).__init__()
 
-        def block(in_feat, out_feat, normalize=True):
-            layers = [nn.Linear(in_feat, out_feat)]
-            if normalize:
-                layers.append(nn.BatchNorm1d(out_feat, 0.8))
-            layers.append(nn.LeakyReLU(0.2, inplace=True))
-            return layers
-
         n_classes = 24
-        self.lbl2latent = nn.Linear(n_classes, latent_dim, bias=True)
-        self.img_shape = (3, img_size, img_size)
-        self.model = nn.Sequential(
-            *block(opt.latent_dim*2, 128, normalize=False),
-            *block(128, 256),
-            *block(256, 512),
-            *block(512, 1024),
-            nn.Linear(1024, int(np.prod(self.img_shape))),
-            nn.Tanh()
-        )
+        nc = 3
+        ngf = img_size
+        self.fc = nn.Sequential(
+                nn.Linear(latent_dim+n_classes, 256, bias=True),
+                nn.ReLU(),
+                nn.Linear(256, latent_dim))
+
+        self.conv_block = nn.Sequential(
+                # input is Z, going into a convolution
+                nn.ConvTranspose2d(latent_dim, ngf * 8, 4, 1, 0, bias=False),
+                nn.ReLU(True),
+                # state size. (ngf*8) x 4 x 4
+                nn.ConvTranspose2d(ngf * 8, ngf * 4, 4, 2, 1, bias=False),
+                nn.ReLU(True),
+                # state size. (ngf*4) x 8 x 8
+                nn.ConvTranspose2d(ngf * 4, ngf * 2, 4, 2, 1, bias=False),
+                nn.ReLU(True),
+                # state size. (ngf*2) x 16 x 16
+                nn.ConvTranspose2d(ngf * 2, ngf, 4, 2, 1, bias=False),
+                nn.ReLU(True),
+                # state size. (ngf) x 32 x 32
+                nn.ConvTranspose2d(ngf, nc, 4, 2, 1, bias=False),
+                nn.Tanh())
 
     def forward(self, noise, labels):
-        gen_input = torch.cat([self.lbl2latent(labels), noise], dim=-1)
-        img = self.model(gen_input)
-        img = img.view(img.shape[0], *self.img_shape)
+        cond_noise = torch.cat([noise, labels], dim=-1)
+        cond_noise = self.fc(cond_noise)
+        cond_noise = cond_noise.view(noise.size(0), noise.size(1), 1, 1)
+        img = self.conv_block(cond_noise)
+
         return img
 
 
 class Discriminator(nn.Module):
-    def __init__(self, img_size, latent_dim):
+    def __init__(self, img_size):
         super(Discriminator, self).__init__()
 
         n_classes = 24
-        img_shape = (3, img_size, img_size)
-        self.lbl2latent = nn.Linear(n_classes, latent_dim, bias=True)
-        self.model = nn.Sequential(
-            # nn.Linear(int(np.prod(img_shape)+latent_dim), 512),
-            nn.Linear(int(np.prod(img_shape)), 512),
-            nn.LeakyReLU(0.2, inplace=True),
-            nn.Linear(512, 256),
-            nn.LeakyReLU(0.2, inplace=True),
-            nn.Linear(256, 1),
-        )
+        ndf = img_size
+        nc = 3
+        img_shape = (nc, img_size, img_size)
+        input_size = np.prod(img_shape)
+        self.transform = nn.Sequential(
+                nn.Linear(input_size+n_classes, 1024),
+                nn.LeakyReLU(0.2),
+                nn.Linear(1024, input_size))
 
-    def forward(self, img, labels):
-        # cond = self.lbl2latent(labels)
-        img_flat = img.view(img.shape[0], -1)
-        # cond_img = torch.cat([img_flat, cond], dim=-1)
-        cond_img = img_flat
-        validity = self.model(cond_img)
+        self.conv_block = nn.Sequential(
+            # input is (nc) x 64 x 64
+            nn.Conv2d(nc, ndf, 4, 2, 1, bias=False),
+            nn.LeakyReLU(0.2, inplace=True),
+            # state size. (ndf) x 32 x 32
+            nn.Conv2d(ndf, ndf * 2, 4, 2, 1, bias=False),
+            nn.LeakyReLU(0.2, inplace=True),
+            # state size. (ndf*2) x 16 x 16
+            nn.Conv2d(ndf * 2, ndf * 4, 4, 2, 1, bias=False),
+            nn.LeakyReLU(0.2, inplace=True),
+            # state size. (ndf*4) x 8 x 8
+            nn.Conv2d(ndf * 4, ndf * 8, 4, 2, 1, bias=False),
+            nn.LeakyReLU(0.2, inplace=True),
+            # state size. (ndf*8) x 4 x 4
+            nn.Conv2d(ndf * 8, 1, 4, 1, 0, bias=False))
+
+    def forward(self, img, cond):
+        cond_img = torch.cat([img.view(img.size(0), -1), cond], dim=-1)
+        cond_img = self.transform(cond_img).view(img.shape)
+        validity = self.conv_block(cond_img)
         return validity
 
 
@@ -170,20 +190,13 @@ if __name__ == "__main__":
 
     opt = params_loader()
 
-    # Loss functions
-    # adversarial_loss = torch.nn.BCELoss()
-    auxiliary_loss = torch.nn.BCELoss()
-    # ----------------
-
     # Initialize generator and discriminator
     generator = Generator(opt.img_size, opt.latent_dim)
-    discriminator = Discriminator(opt.img_size, opt.latent_dim)
+    discriminator = Discriminator(opt.img_size)
 
     if cuda:
         generator.cuda()
         discriminator.cuda()
-        # adversarial_loss.cuda()
-        auxiliary_loss.cuda()
 
     # Initialize weights
     generator.apply(weights_init_normal)
@@ -240,12 +253,12 @@ if __name__ == "__main__":
             gen_labels = dataset.gen_labels(opt.n_classes, len(imgs)).type(FloatTensor)
 
             # Generate a batch of images
-            gen_imgs = generator(z, gen_labels)
+            gen_imgs = generator(z, labels)
 
             # critic = opt.n_critic if run_d_loss > 2.0 else 1
             if i % opt.n_critic == 0:
                 # Loss measures generator's ability to fool the discriminator
-                validity = discriminator(gen_imgs, gen_labels)
+                validity = discriminator(gen_imgs, labels)
                 g_adv_loss = -torch.mean(validity)
                 g_loss = g_adv_loss
 
@@ -261,17 +274,22 @@ if __name__ == "__main__":
             optimizer_D.zero_grad()
 
             # Add gaussian noise to real image
-            noise = torch.cat([torch.randn(imgs.shape[1:]).unsqueeze(0) for i in range(imgs.shape[0])], dim=0).to(real_imgs.device)
-            real_imgs = real_imgs * (1 - noise_ratio) + noise * noise_ratio
+            # noise = torch.cat([torch.randn(imgs.shape[1:]).unsqueeze(0) for i in range(imgs.shape[0])], dim=0).to(real_imgs.device)
+            # real_imgs = real_imgs * (1 - noise_ratio) + noise * noise_ratio
 
             # Loss for real images
             real_pred = discriminator(real_imgs, labels)
             # Loss for fake images
-            fake_imgs = gen_imgs.detach() if torch.rand(1) > 0.3 else real_imgs
-            fake_pred = discriminator(fake_imgs, gen_labels)
+            if torch.rand(1) > 0.5:
+                fake_imgs = real_imgs
+                fake_labels = gen_labels
+            else:
+                fake_imgs = gen_imgs.detach()
+                fake_labels = labels
+            fake_pred = discriminator(fake_imgs, fake_labels)
 
             lambda_gp = 10
-            gradient_penalty = compute_gradient_penalty(discriminator, real_imgs.data, fake_imgs.data, labels, gen_labels)
+            gradient_penalty = compute_gradient_penalty(discriminator, real_imgs.data, fake_imgs.data, labels, fake_labels)
             d_adv_loss = -(torch.mean(real_pred) - torch.mean(fake_pred)) + lambda_gp * gradient_penalty
             d_loss = d_adv_loss
 
@@ -302,4 +320,4 @@ if __name__ == "__main__":
             torch.save({'generator': generator.state_dict(),
                         'discriminator': discriminator.state_dict(),
                         'acc': test_acc},
-                       f'ckpt/wgan_gp/wgan_gp.pth')
+                       'ckpt/wgan_gp/wgan_gp.pth')
