@@ -255,8 +255,8 @@ if __name__ == "__main__":
             # Generate a batch of images
             gen_imgs = generator(z, labels)
 
-            # critic = opt.n_critic if run_d_loss > 2.0 else 1
-            if i % opt.n_critic == 0:
+            critic = opt.n_critic if run_d_loss > 1 else 1
+            if i % critic == 0:
                 # Loss measures generator's ability to fool the discriminator
                 validity = discriminator(gen_imgs, labels)
                 g_adv_loss = -torch.mean(validity)

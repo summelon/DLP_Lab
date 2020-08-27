@@ -20,12 +20,12 @@ def denorm(imgs):
     min_value = float(imgs.min())
     max_value = float(imgs.max())
     # Shift to range(0, 1)
-    imgs.clamp(min=min_value, max=max_value)
+    imgs.clamp_(min=min_value, max=max_value)
     imgs.add_(-min_value).div_(max_value - min_value + 1e-5)
     # Unnormalization and channel last
-    imgs = imgs.mul(255).add_(0.5).clamp_(0, 255).permute(0, 2, 3, 1)
+    imgs.mul_(255).add_(0.5).clamp_(0, 255).permute(0, 2, 3, 1)
     # Normalize to (-1, 1) again and channel first
-    imgs = imgs.div_(255).sub_(0.5).div_(0.5).permute(0, 3, 1, 2)
+    imgs.div_(255).sub_(0.5).div_(0.5).permute(0, 3, 1, 2)
 
     return imgs
 
@@ -46,7 +46,7 @@ def eval_gen(generator, noise):
 
 
 def main():
-    generator_weight_path = "./ckpt/wgan_gp/wgan_gp.pth"
+    generator_weight_path = "./ckpt/wgan_gp_47.pth"
     fix_seed()
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
