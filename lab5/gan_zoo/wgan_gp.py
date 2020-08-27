@@ -117,8 +117,8 @@ class Generator(nn.Module):
         ngf = img_size
         self.fc = nn.Sequential(
                 nn.Linear(latent_dim+n_classes, 256, bias=True),
-                nn.ReLU(),
-                nn.Linear(256, latent_dim))
+                nn.ReLU(True),
+                nn.Linear(256, latent_dim, bias=True))
 
         self.conv_block = nn.Sequential(
                 # input is Z, going into a convolution
@@ -156,25 +156,25 @@ class Discriminator(nn.Module):
         img_shape = (nc, img_size, img_size)
         input_size = np.prod(img_shape)
         self.transform = nn.Sequential(
-                nn.Linear(input_size+n_classes, 1024),
+                nn.Linear(input_size+n_classes, 1024, bias=True),
                 nn.LeakyReLU(0.2),
-                nn.Linear(1024, input_size))
+                nn.Linear(1024, input_size, bias=True))
 
         self.conv_block = nn.Sequential(
             # input is (nc) x 64 x 64
-            nn.Conv2d(nc, ndf, 4, 2, 1, bias=False),
+            nn.Conv2d(nc, ndf, 4, 2, 1, bias=True),
             nn.LeakyReLU(0.2, inplace=True),
             # state size. (ndf) x 32 x 32
-            nn.Conv2d(ndf, ndf * 2, 4, 2, 1, bias=False),
+            nn.Conv2d(ndf, ndf * 2, 4, 2, 1, bias=True),
             nn.LeakyReLU(0.2, inplace=True),
             # state size. (ndf*2) x 16 x 16
-            nn.Conv2d(ndf * 2, ndf * 4, 4, 2, 1, bias=False),
+            nn.Conv2d(ndf * 2, ndf * 4, 4, 2, 1, bias=True),
             nn.LeakyReLU(0.2, inplace=True),
             # state size. (ndf*4) x 8 x 8
-            nn.Conv2d(ndf * 4, ndf * 8, 4, 2, 1, bias=False),
+            nn.Conv2d(ndf * 4, ndf * 8, 4, 2, 1, bias=True),
             nn.LeakyReLU(0.2, inplace=True),
             # state size. (ndf*8) x 4 x 4
-            nn.Conv2d(ndf * 8, 1, 4, 1, 0, bias=False))
+            nn.Conv2d(ndf * 8, 1, 4, 1, 0, bias=True))
 
     def forward(self, img, cond):
         cond_img = torch.cat([img.view(img.size(0), -1), cond], dim=-1)
@@ -205,7 +205,7 @@ if __name__ == "__main__":
     # Configure data loader
     dataloader = torch.utils.data.DataLoader(
                     dataset.SyntheticDataset(opt.img_size),
-                    batch_size=opt.batch_size, shuffle=True)
+                    batch_size=opt.batch_size, shuffle=True, num_workers=8)
 
     # Optimizers
     optimizer_G = torch.optim.Adam(

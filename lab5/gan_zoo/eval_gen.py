@@ -3,7 +3,8 @@ import torch
 import numpy as np
 
 sys.path.append('/home/shortcake/project/DLP_Lab/lab5')
-import acgan
+# import acgan
+import wgan_gp
 import evaluator
 from dataset import SyntheticDataset
 
@@ -22,9 +23,9 @@ def denorm(imgs):
     imgs.clamp(min=min_value, max=max_value)
     imgs.add_(-min_value).div_(max_value - min_value + 1e-5)
     # Unnormalization and channel last
-    imgs.mul_(255).add_(0.5).clamp(0, 255).permute(0, 2, 3, 1)
+    imgs = imgs.mul(255).add_(0.5).clamp_(0, 255).permute(0, 2, 3, 1)
     # Normalize to (-1, 1) again and channel first
-    imgs.div_(255).sub_(0.5).div_(0.5).permute(0, 3, 1, 2)
+    imgs = imgs.div_(255).sub_(0.5).div_(0.5).permute(0, 3, 1, 2)
 
     return imgs
 
@@ -45,11 +46,11 @@ def eval_gen(generator, noise):
 
 
 def main():
-    generator_weight_path = "./ckpt/acgan/acgan.pth"
+    generator_weight_path = "./ckpt/wgan_gp/wgan_gp.pth"
     fix_seed()
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-    generator = acgan.Generator(img_size=64, latent_dim=100).to(device)
+    generator = wgan_gp.Generator(img_size=64, latent_dim=100).to(device)
     saved_dict = torch.load(generator_weight_path)
     generator.load_state_dict(saved_dict['generator'])
     generator.eval()
