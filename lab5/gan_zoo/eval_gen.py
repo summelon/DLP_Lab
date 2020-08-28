@@ -1,6 +1,7 @@
 import sys
 import torch
 import numpy as np
+from argparse import ArgumentParser
 
 sys.path.append('/home/shortcake/project/DLP_Lab/lab5')
 # import acgan
@@ -9,11 +10,11 @@ import evaluator
 from dataset import SyntheticDataset
 
 
-def fix_seed():
-    torch.manual_seed(666)
+def fix_seed(seed):
+    torch.manual_seed(seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
-    np.random.seed(666)
+    np.random.seed(seed)
 
 
 def denorm(imgs):
@@ -45,12 +46,15 @@ def eval_gen(generator, noise):
     return classifier.eval(imgs, labels)
 
 
-def main():
-    generator_weight_path = "./ckpt/wgan_gp_47.pth"
-    fix_seed()
+def main(params):
+    generator_weight_path = params['weight']
+    fix_seed(params['seed'])
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-    generator = wgan_gp.Generator(img_size=64, latent_dim=100).to(device)
+    exec('import ' + params['model'])
+    generator = eval(
+            f"{params['model']}.Generator(img_size=64, latent_dim=100)")
+    generator = generator.to(device)
     saved_dict = torch.load(generator_weight_path)
     generator.load_state_dict(saved_dict['generator'])
     generator.eval()
@@ -61,5 +65,19 @@ def main():
     print(acc)
 
 
+def param_loader():
+    parser = ArgumentParser()
+    parser.add_argument("--weight", type=str,
+                        help="Path to where saved weight is")
+    parser.add_argument("--model", type=str, choices=['acgan', 'wgan_gp'],
+                        help="Use what kinds of GAN model")
+    parser.add_argument("--seed", type=int, default=666,
+                        help="Random seed number")
+    args, _ = parser.parse_known_args()
+
+    return vars(args)
+
+
 if __name__ == '__main__':
-    main()
+    p = param_loader()
+    main(p)
