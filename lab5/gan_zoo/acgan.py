@@ -10,7 +10,7 @@ from torch.autograd import Variable
 from torchvision.utils import save_image
 
 
-sys.path.append('/home/shortcake/project/DLP_Lab/lab5')
+sys.path.append('/home/project/DLP_Lab/lab5')
 import dataset
 # sys.path.append('/home/shortcake/project/DLP_Lab/lab5')
 import eval_gen
@@ -87,12 +87,12 @@ class Generator(nn.Module):
 
         channels = 3
         n_classes = 24
-        # self.label_emb = nn.Embedding(opt.n_classes, opt.latent_dim)
-        self.lbl2latent = nn.Linear(n_classes, latent_dim, bias=True)
-
         self.init_size = img_size // 4  # Initial size before upsampling
+        self.encode_lbl = nn.Linear(n_classes, self.init_size**2, bias=True)
+        self.encode_latent = nn.Linear(
+                latent_dim, self.init_size**2, bias=True)
         self.l1 = nn.Sequential(
-                nn.Linear(latent_dim*2, 128 * self.init_size ** 2))
+                nn.Linear(2*self.init_size**2, 128 * self.init_size ** 2))
 
         self.conv_blocks = nn.Sequential(
             nn.BatchNorm2d(128),
@@ -110,7 +110,8 @@ class Generator(nn.Module):
 
     def forward(self, noise, labels):
         # gen_input = torch.mul(self.label_emb(labels), noise)
-        gen_input = torch.cat([self.lbl2latent(labels), noise], dim=-1)
+        gen_input = torch.cat(
+                [self.encode_lbl(labels), self.encode_latent(noise)], dim=-1)
         out = self.l1(gen_input)
         out = out.view(out.shape[0], 128, self.init_size, self.init_size)
         img = self.conv_blocks(out)
@@ -123,9 +124,11 @@ class Discriminator(nn.Module):
 
         def discriminator_block(in_filters, out_filters, bn=True):
             """Returns layers of each discriminator block"""
-            block = [nn.Conv2d(in_filters, out_filters, 3, 2, 1), nn.LeakyReLU(0.2, inplace=True), nn.Dropout2d(0.25)]
+            block = [nn.Conv2d(in_filters, out_filters, 3, 2, 1)]
             if bn:
                 block.append(nn.BatchNorm2d(out_filters, 0.8))
+            block.append(nn.LeakyReLU(0.2, inplace=True))
+            block.append(nn.Dropout2d(0.25))
             return block
 
         channels = 3
@@ -143,7 +146,6 @@ class Discriminator(nn.Module):
         # Output layers
         self.adv_layer = nn.Sequential(
                 nn.Linear(128 * ds_size ** 2, 1), nn.Sigmoid())
-        # self.aux_layer = nn.Sequential(nn.Linear(128 * ds_size ** 2, opt.n_classes), nn.Softmax(dim=1))
         self.aux_layer = nn.Sequential(
                 nn.Linear(128 * ds_size ** 2, n_classes), nn.Sigmoid())
 
@@ -184,7 +186,8 @@ if __name__ == "__main__":
     # Configure data loader
     dataloader = torch.utils.data.DataLoader(
                     dataset.SyntheticDataset(opt.img_size),
-                    batch_size=opt.batch_size, shuffle=True)
+                    batch_size=opt.batch_size, shuffle=True,
+                    num_workers=8)
 
     # Optimizers
     optimizer_G = torch.optim.Adam(
@@ -199,7 +202,6 @@ if __name__ == "__main__":
     test_noise = [torch.randn(1, opt.latent_dim) for i in range(32)]
     test_noise = torch.cat(test_noise, dim=0).type(FloatTensor)
     best_acc = 0
-    noise_ratio = opt.noise_ratio
     for epoch in range(opt.n_epochs):
         run_g_loss, run_d_loss, run_size = 0, 0, 0
         run_correct, run_gt = 0, 0
@@ -249,6 +251,7 @@ if __name__ == "__main__":
 
             # Add gaussian noise to real image
             noise = torch.cat([torch.randn(imgs.shape[1:]).unsqueeze(0) for i in range(imgs.shape[0])], dim=0).to(real_imgs.device)
+            noise_ratio = opt.noise_ratio if torch.rand(1) > 0.5 else 0
             real_imgs = real_imgs * (1 - noise_ratio) + noise * noise_ratio
             # Loss for real images
             real_pred, real_aux = discriminator(real_imgs)
