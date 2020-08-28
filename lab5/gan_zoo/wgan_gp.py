@@ -122,19 +122,19 @@ class Generator(nn.Module):
 
         self.conv_block = nn.Sequential(
                 # input is Z, going into a convolution
-                nn.ConvTranspose2d(latent_dim, ngf * 8, 4, 1, 0, bias=False),
+                nn.ConvTranspose2d(latent_dim, ngf * 8, 4, 1, 0, bias=True),
                 nn.ReLU(True),
                 # state size. (ngf*8) x 4 x 4
-                nn.ConvTranspose2d(ngf * 8, ngf * 4, 4, 2, 1, bias=False),
+                nn.ConvTranspose2d(ngf * 8, ngf * 4, 4, 2, 1, bias=True),
                 nn.ReLU(True),
                 # state size. (ngf*4) x 8 x 8
-                nn.ConvTranspose2d(ngf * 4, ngf * 2, 4, 2, 1, bias=False),
+                nn.ConvTranspose2d(ngf * 4, ngf * 2, 4, 2, 1, bias=True),
                 nn.ReLU(True),
                 # state size. (ngf*2) x 16 x 16
-                nn.ConvTranspose2d(ngf * 2, ngf, 4, 2, 1, bias=False),
+                nn.ConvTranspose2d(ngf * 2, ngf, 4, 2, 1, bias=True),
                 nn.ReLU(True),
                 # state size. (ngf) x 32 x 32
-                nn.ConvTranspose2d(ngf, nc, 4, 2, 1, bias=False),
+                nn.ConvTranspose2d(ngf, nc, 4, 2, 1, bias=True),
                 nn.Tanh())
 
     def forward(self, noise, labels):
@@ -255,8 +255,7 @@ if __name__ == "__main__":
             # Generate a batch of images
             gen_imgs = generator(z, labels)
 
-            critic = opt.n_critic if run_d_loss > 1 else 1
-            if i % critic == 0:
+            if i % opt.n_critic == 0:
                 # Loss measures generator's ability to fool the discriminator
                 validity = discriminator(gen_imgs, labels)
                 g_adv_loss = -torch.mean(validity)
