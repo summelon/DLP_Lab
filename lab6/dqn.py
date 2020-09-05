@@ -96,8 +96,9 @@ class DQN:
         state, action, reward, next_state, done = self._memory.sample(
             self.batch_size, self.device)
         action = action.type(torch.long)
-        done_mask = torch.tensor((done == torch.zeros(done.shape, device=done.device)), device=done.device)
-        next_state = next_state[done_mask.repeat(1, next_state.size(1))].view(torch.sum(done_mask), -1)
+        done_mask = ~(done == 1).view(-1, 1)
+        next_state = next_state[done_mask.repeat(
+                        1, next_state.size(1))].view(-1, next_state.size(1))
 
         # Q value for present state
         q_value = self._behavior_net(state).gather(1, action)
