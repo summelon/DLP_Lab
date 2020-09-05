@@ -73,9 +73,8 @@ class DQN:
     def select_action(self, state, epsilon, action_space):
         '''epsilon-greedy based on behavior network'''
         if torch.rand(1) > epsilon:
-            # NOTE Batch size for actions?
             with torch.no_grad():
-                state_tensor = torch.tensor(state, device=self.device).view(1, -1)
+                state_tensor = torch.tensor([state], device=self.device)
                 action = self._behavior_net(state_tensor).max(1)[1]
                 return action.item()
         else:
@@ -95,23 +94,20 @@ class DQN:
         # sample a minibatch of transitions
         state, action, reward, next_state, done = self._memory.sample(
             self.batch_size, self.device)
-        action = action.type(torch.long)
-        done_mask = ~(done == 1).view(-1, 1)
-        next_state = next_state[done_mask.repeat(
-                        1, next_state.size(1))].view(-1, next_state.size(1))
 
-        # Q value for present state
-        q_value = self._behavior_net(state).gather(1, action)
+        # Q value for present state and action
+        q_value = self._behavior_net(state).gather(1, action.type(torch.long))
+
         with torch.no_grad():
             # Q values for next state, 0 if termination
-            q_next = torch.zeros(q_value.shape, device=q_value.device)
-            q_next[done_mask] = self._target_net(next_state).max(1)[0].detach()
+            q_next = self._target_net(next_state).max(1)[0].view(-1, 1)
             # Expectation
-            q_target = (q_next * gamma) + reward
-        criterion = torch.nn.MSELoss()
-        loss = criterion(q_value, q_target)
+            q_next_masked = torch.sub(1, done) * q_next
+            q_target = (q_next_masked * gamma) + reward
+        # loss = torch.nn.functional.mse_loss(q_value, q_target)
+        loss = torch.nn.functional.smooth_l1_loss(q_value, q_target)
 
-        # optimize
+        # Optimize
         self._optimizer.zero_grad()
         loss.backward()
         nn.utils.clip_grad_norm_(self._behavior_net.parameters(), 5)
@@ -147,6 +143,10 @@ def train(args, env, agent, writer):
     action_space = env.action_space
     total_steps, epsilon = 0, 1.
     ewma_reward = 0
+    # Fix torch seed
+    fix_seed(args.seed)
+    # Fix env seed
+    env.seed(args.seed)
     for episode in range(args.episode):
         total_reward = 0
         state = env.reset()
@@ -167,6 +167,7 @@ def train(args, env, agent, writer):
             state = next_state
             total_reward += reward
             total_steps += 1
+
             if done:
                 ewma_reward = 0.05 * total_reward + (1 - 0.05) * ewma_reward
                 writer.add_scalar('Train/Episode Reward', total_reward,
@@ -209,6 +210,13 @@ def test(args, env, agent, writer):
                 break
     print('Average Reward', np.mean(rewards))
     env.close()
+
+
+def fix_seed(seed):
+    torch.manual_seed(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    np.random.seed(seed)
 
 
 def main():
