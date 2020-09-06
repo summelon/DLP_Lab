@@ -58,9 +58,8 @@ class DQN:
         self._target_net = Net().to(args.device)
         # initialize target network
         self._target_net.load_state_dict(self._behavior_net.state_dict())
-        opt_params = itertools.chain(*[self._target_net.parameters(),
-                                       self._behavior_net.parameters()])
-        self._optimizer = torch.optim.Adam(opt_params, lr=5e-4)
+        self._optimizer = torch.optim.Adam(
+                self._behavior_net.parameters(), lr=5e-4)
         # memory
         self._memory = ReplayMemory(capacity=args.capacity)
         # --- config ---
@@ -69,6 +68,7 @@ class DQN:
         self.gamma = args.gamma
         self.freq = args.freq
         self.target_freq = args.target_freq
+        self.ddqn = args.ddqn
 
     def select_action(self, state, epsilon, action_space):
         '''epsilon-greedy based on behavior network'''
@@ -100,10 +100,15 @@ class DQN:
 
         with torch.no_grad():
             # Q values for next state, 0 if termination
-            q_next = self._target_net(next_state).max(1)[0].view(-1, 1)
+            if self.ddqn:
+                beh_act = self._behavior_net(next_state).max(1)[1].view(-1, 1)
+                q_next = self._target_net(next_state)
+                q_next = q_next.gather(1, beh_act.type(torch.long))
+            else:
+                q_next = self._target_net(next_state).max(1)[0].view(-1, 1)
             # Expectation
             q_next_masked = torch.sub(1, done) * q_next
-            q_target = (q_next_masked * gamma) + reward
+            q_target = reward + q_next_masked * gamma
         # loss = torch.nn.functional.mse_loss(q_value, q_target)
         loss = torch.nn.functional.smooth_l1_loss(q_value, q_target)
 
@@ -147,10 +152,13 @@ def train(args, env, agent, writer):
     fix_seed(args.seed)
     # Fix env seed
     env.seed(args.seed)
+    random.seed(args.seed)
     for episode in range(args.episode):
         total_reward = 0
         state = env.reset()
         for t in itertools.count(start=1):
+            if args.render and episode % 50 == 0:
+                env.render()
             # select action
             if total_steps < args.warmup:
                 action = action_space.sample()
@@ -205,7 +213,7 @@ def test(args, env, agent, writer):
             if done:
                 writer.add_scalar('Test/Episode Reward',
                                   total_reward, n_episode)
-                print(f'Episode: {n_episode}, Reward: {total_reward}')
+                print(f'Episode: {n_episode:d}, Reward: {total_reward:.2f}')
                 rewards.append(total_reward)
                 break
     print('Average Reward', np.mean(rewards))
@@ -236,6 +244,7 @@ def main():
     parser.add_argument('--gamma', default=.99, type=float)
     parser.add_argument('--freq', default=4, type=int)
     parser.add_argument('--target_freq', default=1000, type=int)
+    parser.add_argument('--ddqn', action='store_true')
     # test
     parser.add_argument('--test_only', action='store_true')
     parser.add_argument('--render', action='store_true')
@@ -246,6 +255,8 @@ def main():
     # --- main ---
     env = gym.make('LunarLander-v2')
     agent = DQN(args)
+    import shutil
+    shutil.rmtree('./log/dqn')
     writer = SummaryWriter(args.logdir)
     if not args.test_only:
         train(args, env, agent, writer)

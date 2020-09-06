@@ -38,19 +38,31 @@ class ReplayMemory:
 
     def sample(self, batch_size, device):
         '''sample a batch of transition tensors'''
-        ## TODO ##
-        raise NotImplementedError
+        # NOTE
+        transitions = random.sample(self.buffer, batch_size)
+        return (torch.tensor(x, dtype=torch.float, device=device)
+                for x in zip(*transitions))
 
 
 class ActorNet(nn.Module):
     def __init__(self, state_dim=8, action_dim=2, hidden_dim=(400, 300)):
         super().__init__()
-        ## TODO ##
-        raise NotImplementedError
+        # NOTE
+        self.actor_head = nn.Sequential(
+                nn.Linear(state_dim, hidden_dim[0]),
+                nn.ReLU(inplace=True))
+        self.actor_hidden = nn.Sequential(
+                nn.Linear(hidden_dim[0], hidden_dim[1]),
+                nn.ReLU(inplace=True))
+        self.actor = nn.Sequential(
+                nn.Linear(hidden_dim[1], action_dim),
+                nn.Tanh())
 
     def forward(self, x):
-        ## TODO ##
-        raise NotImplementedError
+        x = self.actor_head(x)
+        x = self.actor_hidden(x)
+        x = self.actor(x)
+        return x
 
 
 class CriticNet(nn.Module):
@@ -83,16 +95,17 @@ class DDPG:
         # initialize target network
         self._target_actor_net.load_state_dict(self._actor_net.state_dict())
         self._target_critic_net.load_state_dict(self._critic_net.state_dict())
-        ## TODO ##
-        # self._actor_opt = ?
-        # self._critic_opt = ?
-        raise NotImplementedError
+        # Optimizer
+        self._actor_opt = torch.optim.Adam(
+                self._actor_net.parameters(), lr=1e-3)
+        self._critic_opt = torch.optim.Adam(
+                self._critic_net.parameters(), lr=1e-3)
         # action noise
         self._action_noise = GaussianNoise(dim=2)
         # memory
         self._memory = ReplayMemory(capacity=args.capacity)
 
-        ## config ##
+        # --- config ---
         self.device = args.device
         self.batch_size = args.batch_size
         self.tau = args.tau
@@ -100,8 +113,14 @@ class DDPG:
 
     def select_action(self, state, noise=True):
         '''based on the behavior (actor) network and exploration noise'''
-        ## TODO ##
-        raise NotImplementedError
+        with torch.no_grad():
+            state_tensor = torch.tensor(state, device=self.device)
+            action = self._actor_net(state_tensor)
+            if noise:
+                action += torch.tensor(
+                        self._action_noise.sample(), device=self.device)
+            action = torch.clamp(action, -1, 1)
+        return action.detach().cpu().numpy()
 
     def append(self, state, action, reward, next_state, done):
         self._memory.append(state, action, [reward / 100], next_state,
@@ -124,29 +143,30 @@ class DDPG:
         state, action, reward, next_state, done = self._memory.sample(
             self.batch_size, self.device)
 
-        ## update critic ##
+        # --- update critic ---
         # critic loss
-        ## TODO ##
-        # q_value = ?
-        # with torch.no_grad():
-        #    a_next = ?
-        #    q_next = ?
-        #    q_target = ?
-        # criterion = ?
-        # critic_loss = criterion(q_value, q_target)
-        raise NotImplementedError
+        # Present Q value
+        q_value = critic_net(state, action)
+        with torch.no_grad():
+            # Next action and Q value
+            a_next = target_actor_net(next_state)
+            q_next = target_critic_net(next_state, a_next)
+            # Expectation
+            q_next_masked = torch.sub(1, done) * q_next
+            q_target = reward + gamma * q_next_masked
+        # critic_loss = nn.functional.mse_loss(q_value, q_target)
+        critic_loss = nn.functional.smooth_l1_loss(q_value, q_target)
         # optimize critic
         actor_net.zero_grad()
         critic_net.zero_grad()
         critic_loss.backward()
         critic_opt.step()
 
-        ## update actor ##
+        # --- update actor ---
         # actor loss
-        ## TODO ##
-        # action = ?
-        # actor_loss = ?
-        raise NotImplementedError
+        action = actor_net(state)
+        # NOTE formula?
+        actor_loss = -torch.mean(critic_net(state, action))
         # optimize actor
         actor_net.zero_grad()
         critic_net.zero_grad()
@@ -157,8 +177,7 @@ class DDPG:
     def _update_target_network(target_net, net, tau):
         '''update target network by _soft_ copying from behavior network'''
         for target, behavior in zip(target_net.parameters(), net.parameters()):
-            ## TODO ##
-            raise NotImplementedError
+            target.data.copy_(tau * behavior.data + (1 - tau) * target.data)
 
     def save(self, model_path, checkpoint=False):
         if checkpoint:
@@ -214,14 +233,13 @@ def train(args, env, agent, writer):
             total_steps += 1
             if done:
                 ewma_reward = 0.05 * total_reward + (1 - 0.05) * ewma_reward
-                writer.add_scalar('Train/Episode Reward', total_reward,
-                                  total_steps)
-                writer.add_scalar('Train/Ewma Reward', ewma_reward,
-                                  total_steps)
-                print(
-                    'Step: {}\tEpisode: {}\tLength: {:3d}\tTotal reward: {:.2f}\tEwma reward: {:.2f}'
-                    .format(total_steps, episode, t, total_reward,
-                            ewma_reward))
+                writer.add_scalar(
+                        'Train/Episode Reward', total_reward, total_steps)
+                writer.add_scalar(
+                        'Train/Ewma Reward', ewma_reward, total_steps)
+                print('Step: {}\tEpisode: {}\tLength: {:3d}\t'
+                      'Total reward: {:.2f}\tEwma reward: {:.2f}'.format(
+                          total_steps, episode, t, total_reward, ewma_reward))
                 break
     env.close()
 
@@ -234,18 +252,27 @@ def test(args, env, agent, writer):
         total_reward = 0
         env.seed(seed)
         state = env.reset()
-        ## TODO ##
-        # ...
-        #     if done:
-        #         writer.add_scalar('Test/Episode Reward', total_reward, n_episode)
-        #         ...
-        raise NotImplementedError
+        for t in itertools.count(start=1):
+            # One step movement
+            action = agent.select_action(state, noise=False)
+            next_state, reward, done, _ = env.step(action)
+
+            # Update statement
+            state = next_state
+            total_reward += reward
+
+            if done:
+                writer.add_scalar(
+                        'Test/Episode Reward', total_reward, n_episode)
+                print(f'Episode: {n_episode:d}, Reward: {total_reward:.2f}')
+                rewards.append(total_reward)
+                break
     print('Average Reward', np.mean(rewards))
     env.close()
 
 
 def main():
-    ## arguments ##
+    # --- arguments ---
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('-d', '--device', default='cuda')
     parser.add_argument('-m', '--model', default='ddpg.pth')
@@ -265,9 +292,11 @@ def main():
     parser.add_argument('--seed', default=20200519, type=int)
     args = parser.parse_args()
 
-    ## main ##
+    # --- main ---
     env = gym.make('LunarLanderContinuous-v2')
     agent = DDPG(args)
+    import shutil
+    shutil.rmtree('./log/ddpg')
     writer = SummaryWriter(args.logdir)
     if not args.test_only:
         train(args, env, agent, writer)
