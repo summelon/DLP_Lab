@@ -38,7 +38,6 @@ class ReplayMemory:
 
     def sample(self, batch_size, device):
         '''sample a batch of transition tensors'''
-        # NOTE
         transitions = random.sample(self.buffer, batch_size)
         return (torch.tensor(x, dtype=torch.float, device=device)
                 for x in zip(*transitions))
@@ -165,7 +164,6 @@ class DDPG:
         # --- update actor ---
         # actor loss
         action = actor_net(state)
-        # NOTE formula?
         actor_loss = -torch.mean(critic_net(state, action))
         # optimize actor
         actor_net.zero_grad()
